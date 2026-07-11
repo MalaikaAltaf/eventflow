@@ -32,13 +32,25 @@ def clean_db_url_for_asyncpg(url: str) -> tuple[str, dict]:
     import urllib.parse
     if not url:
         return "", {}
-        
-    # Auto-encode unescaped '#' in the password segment (before the '@' host separator)
-    if "@" in url:
-        credentials, host_part = url.rsplit("@", 1)
-        if "#" in credentials:
-            credentials = credentials.replace("#", "%23")
-            url = f"{credentials}@{host_part}"
+
+    # Validate database URL format
+    if "://" in url:
+        scheme, rest = url.split("://", 1)
+        if "@" not in rest:
+            raise ValueError(
+                "Invalid database connection URL: Missing '@' separator. "
+                "Ensure your DATABASE_URL is a complete connection string (e.g. postgresql://user:password@host:port/dbname), "
+                "not just a password."
+            )
+            
+        credentials, host_and_query = rest.rsplit("@", 1)
+        if ":" in credentials:
+            user, password = credentials.split(":", 1)
+            # URL-encode the password to escape special characters like @, :, # etc.
+            # Unquote first to avoid double-escaping if already escaped.
+            unquoted_pass = urllib.parse.unquote(password)
+            escaped_pass = urllib.parse.quote(unquoted_pass, safe="")
+            url = f"{scheme}://{user}:{escaped_pass}@{host_and_query}"
             
     parsed = urllib.parse.urlparse(url)
     query_params = urllib.parse.parse_qs(parsed.query)
