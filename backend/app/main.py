@@ -25,6 +25,20 @@ async def lifespan(app: FastAPI):
     settings = get_settings()
     logger.info("Starting EventFlow backend (env=%s)", settings.app_env)
 
+    # Safe DB URL Diagnostic
+    db_url = settings.database_url
+    if db_url:
+        masked_url = db_url
+        if "@" in db_url:
+            try:
+                creds, host = db_url.rsplit("@", 1)
+                masked_url = f"postgresql://***:***@{host}"
+            except Exception:
+                masked_url = "Invalid format"
+        logger.info("Using DATABASE_URL: %s", masked_url)
+    else:
+        logger.warning("DATABASE_URL is not set!")
+
     # Initialize Firebase Admin SDK
     try:
         _get_firebase_app()
