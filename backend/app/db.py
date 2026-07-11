@@ -33,9 +33,15 @@ def clean_db_url_for_asyncpg(url: str) -> tuple[str, dict]:
     if not url:
         return "", {}
 
-    # Validate database URL format
+    # Trim whitespaces and newlines
+    url = url.strip()
+
+    # Validate database URL format and convert scheme to postgresql+asyncpg
     if "://" in url:
         scheme, rest = url.split("://", 1)
+        if scheme == "postgresql":
+            scheme = "postgresql+asyncpg"
+            
         if "@" not in rest:
             raise ValueError(
                 "Invalid database connection URL: Missing '@' separator. "
@@ -51,6 +57,8 @@ def clean_db_url_for_asyncpg(url: str) -> tuple[str, dict]:
             unquoted_pass = urllib.parse.unquote(password)
             escaped_pass = urllib.parse.quote(unquoted_pass, safe="")
             url = f"{scheme}://{user}:{escaped_pass}@{host_and_query}"
+        else:
+            url = f"{scheme}://{rest}"
             
     parsed = urllib.parse.urlparse(url)
     query_params = urllib.parse.parse_qs(parsed.query)
