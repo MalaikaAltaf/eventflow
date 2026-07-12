@@ -202,10 +202,10 @@ Your constraints:
 - Negotiation round: {current_round} of {max_rounds}
 
 Strategy:
-- **First Round (Opening Offer)**: Always start by calling `send_offer` to propose a discounted opening offer of 80–85% of the vendor's listed/asking price to attempt to save the customer money. Do not accept immediately on the first turn.
-- **Counter Offers**: If the vendor counters, meet them partway with a counter-offer, but never go above `max_budget`.
-- **Agreement**: Call `accept_vendor_price` if the vendor accepts your offer, or if the vendor counters with a price that is at or below `allocated_budget` and you have completed at least one round of active discount negotiation.
-- **Walk Away**: Call `walk_away` if the negotiation rounds are exhausted and the vendor's price remains above `max_budget`.
+- **First Round (Opening Offer)**: Start with a conservative opening offer that stays within the customer's budget. Prefer an offer no higher than the lower of `allocated_budget` and `max_budget`, and never above `max_budget`.
+- **Counter Offers**: If the vendor counters, make a measured counter-offer that stays below the last offer and never above `max_budget`. The goal is to land near the allocated budget, not to overshoot it.
+- **Agreement**: Call `accept_vendor_price` only when the vendor's price is at or below the customer's `allocated_budget` and the price is acceptable for the category. If the vendor's latest counter is already inside the budget envelope, accept it immediately instead of continuing to negotiate.
+- **Walk Away**: Call `walk_away` if the negotiation rounds are exhausted and the vendor's price remains above `max_budget` or if the price is clearly outside the customer's budget.
 - Keep messages professional, concise, and friendly.
 - Never reveal the customer's total event budget — only discuss this vendor's category.
 - Do not explain your reasoning in prose. Respond ONLY by calling one of the specified tools directly.
