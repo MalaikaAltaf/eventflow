@@ -112,6 +112,7 @@ class _VendorNegotiationDetailScreenState extends ConsumerState<VendorNegotiatio
         widget.negotiationId,
         amount,
         _counterNoteController.text.trim(),
+        firestoreNegotiationId: widget.negotiationId,
       );
       setState(() {
         _showCounterSheet = false;
@@ -168,7 +169,10 @@ class _VendorNegotiationDetailScreenState extends ConsumerState<VendorNegotiatio
                   Navigator.pop(context);
                   setState(() => _isSubmitting = true);
                   try {
-                    await ref.read(negotiationServiceProvider).rejectNegotiation(widget.negotiationId);
+                    await ref.read(negotiationServiceProvider).rejectNegotiation(
+                      widget.negotiationId,
+                      firestoreNegotiationId: widget.negotiationId,
+                    );
                     if (mounted) context.pop();
                   } catch (e) {
                     if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(tr('error_try_again'))));
@@ -231,6 +235,7 @@ class _VendorNegotiationDetailScreenState extends ConsumerState<VendorNegotiatio
                           detail.eventId,
                           detail.vendorId,
                           detail.currentOffer,
+                          firestoreNegotiationId: widget.negotiationId,
                         );
                         if (mounted) {
                           Future.delayed(const Duration(seconds: 2), () {

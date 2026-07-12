@@ -103,6 +103,7 @@ class _VendorInboxScreenState extends ConsumerState<VendorInboxScreen> with Tick
                             eventId,
                             user.uid,
                             amount,
+                            firestoreNegotiationId: negotiationId,
                           );
                         }
                       },

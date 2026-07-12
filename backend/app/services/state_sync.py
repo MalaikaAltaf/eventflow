@@ -17,6 +17,7 @@ Firestore schema mirrors per SRS Section 6.2:
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -209,14 +210,14 @@ async def append_negotiation_message(
             msg_data["offerAmount"] = offer_amount
 
         db_client = get_firestore_client()
-        (
+        ref = (
             db_client
             .collection("negotiations")
             .document(firestore_id)
             .collection("messages")
             .document(msg_id)
-            .set(msg_data)
         )
+        await asyncio.to_thread(lambda: ref.set(msg_data))
         logger.debug("Appended message %s to negotiation %s", msg_id, firestore_id)
 
     return msg_id
@@ -237,7 +238,7 @@ async def _firestore_update(path: str, data: dict[str, Any]) -> None:
         ref = db_client.collection(parts[0]).document(parts[1])
         for i in range(2, len(parts) - 1, 2):
             ref = ref.collection(parts[i]).document(parts[i + 1])
-        ref.set(data, merge=True)
+        await asyncio.to_thread(lambda: ref.set(data, merge=True))
     except Exception as exc:
         logger.warning("Firestore update failed for %s: %s", path, exc)
 

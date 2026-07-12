@@ -32,6 +32,18 @@ service cloud.firestore {
       return isSignedIn() && userRole() == 'vendor';
     }
 
+    // Checks that a vendor update only touches allowed fields (not status/isVendorTurn directly)
+    function onlyAllowedVendorFields() {
+      // Vendors update currentOffer, lastActivity via their flutter client write;
+      // status and isVendorTurn are managed by the backend agent after processing.
+      // We allow the Firestore write from negotiation_service.dart which sets:
+      //   currentOffer, offerCount, lastActivity, status, isVendorTurn
+      // The backend webhook re-invokes the agent immediately after, which then
+      // authoritatively sets the next status. We allow all fields here since
+      // the backend is the authoritative source via Admin SDK anyway.
+      return true;
+    }
+
     // ──────────────────────────────────────────────────────────────────────
     // users/{uid}
     // A user can read/write only their own profile document.
@@ -102,17 +114,4 @@ service cloud.firestore {
       allow read, write: if false;
     }
   }
-}
-
-// ── Inline function (must be inside service block — duplicated here for clarity) ──
-// Checks that a vendor update only touches allowed fields (not status/isVendorTurn directly)
-function onlyAllowedVendorFields() {
-  // Vendors update currentOffer, lastActivity via their flutter client write;
-  // status and isVendorTurn are managed by the backend agent after processing.
-  // We allow the Firestore write from negotiation_service.dart which sets:
-  //   currentOffer, offerCount, lastActivity, status, isVendorTurn
-  // The backend webhook re-invokes the agent immediately after, which then
-  // authoritatively sets the next status. We allow all fields here since
-  // the backend is the authoritative source via Admin SDK anyway.
-  return true;
 }

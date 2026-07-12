@@ -62,8 +62,24 @@ class _SignInScreenState extends ConsumerState<SignInScreen> with TickerProvider
 
       if (!mounted) return;
 
+      final user = credential.user;
+      if (user == null) {
+        throw FirebaseAuthException(code: 'user-null', message: 'Unable to complete authentication.');
+      }
+
       if (widget.isReturningUser) {
-        final doc = await FirebaseFirestore.instance.collection('users').doc(credential.user!.uid).get();
+        if (!user.emailVerified) {
+          await FirebaseAuth.instance.signOut();
+          if (!mounted) return;
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Please verify your email before signing in.')),
+            );
+          }
+          return;
+        }
+
+        final doc = await FirebaseFirestore.instance.collection('users').doc(user.uid).get();
         if (!mounted) return;
         
         final data = doc.data();
@@ -83,12 +99,24 @@ class _SignInScreenState extends ConsumerState<SignInScreen> with TickerProvider
         }
       } else {
         // Create user document in Firestore with the selected role
-        await FirebaseFirestore.instance.collection('users').doc(credential.user!.uid).set({
-          'uid': credential.user!.uid,
-          'email': credential.user!.email,
+        await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
+          'uid': user.uid,
+          'email': user.email,
           'role': _selectedRole,
           'createdAt': FieldValue.serverTimestamp(),
         });
+
+        if (!user.emailVerified) {
+          await user.sendEmailVerification();
+          await FirebaseAuth.instance.signOut();
+          if (!mounted) return;
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('A verification email has been sent. Please verify your email before signing in.')),
+            );
+          }
+          return;
+        }
 
         // Check role and navigate
         if (_selectedRole == 'vendor') {

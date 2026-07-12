@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     app_host: str = "0.0.0.0"
     app_port: int = 8000
     secret_key: str = "change-me"
+    cors_allowed_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
 
     # ── Database ─────────────────────────────────────────────────────
     database_url: str = Field(
@@ -105,6 +106,12 @@ class Settings(BaseSettings):
                 "FIREWORKS_API_KEY is not set. Agent calls will fail.",
                 stacklevel=2,
             )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_security_settings(self) -> "Settings":
+        if self.is_production and self.secret_key in {"", "change-me"}:
+            raise ValueError("SECRET_KEY must be set to a strong value in production")
         return self
 
 

@@ -77,9 +77,13 @@ def create_app() -> FastAPI:
     app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
     # CORS — Flutter web + mobile dev
-    allowed_origins = ["http://localhost:*", "http://127.0.0.1:*"]
-    if settings.is_production:
-        allowed_origins = []  # Lock down in production
+    allowed_origins = [
+        origin.strip()
+        for origin in settings.cors_allowed_origins.split(",")
+        if origin.strip()
+    ]
+    if settings.is_production and not allowed_origins:
+        allowed_origins = ["https://*.web.app", "https://*.firebaseapp.com"]
 
     app.add_middleware(
         CORSMiddleware,

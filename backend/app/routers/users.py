@@ -104,9 +104,20 @@ async def onboard_vendor(
         "decorator": "Decorator",
         "photographer": "Photographer",
         "dj_sound": "DJ / Music",
+        "dj / music": "DJ / Music",
         "tent": "Tent / Marquee",
+        "tent / marquee": "Tent / Marquee",
         "security": "Security",
         "flowers": "Flowers",
+        "sound system": "Sound System",
+        "sound": "Sound System",
+        "venue": "Venue",
+        "food": "Caterer",
+        "refreshments": "Caterer",
+        "medical": "Security",
+        "ground": "Venue",
+        "stage": "Venue",
+        "av": "DJ / Music",
         "other": "Other"
     }
     normalized_category = category_map.get(body.category.lower(), body.category)
