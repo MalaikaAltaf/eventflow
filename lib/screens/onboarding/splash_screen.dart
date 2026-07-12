@@ -19,7 +19,6 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
   late AnimationController _controller;
   late Animation<double> _fadeAnimation;
   String _selectedLang = 'English';
-  bool _hasSavedLanguage = false;
   bool _isLoading = true;
 
   @override
@@ -38,9 +37,6 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
   Future<void> _checkLanguage() async {
     final prefs = await SharedPreferences.getInstance();
     final savedLang = prefs.getString('app_language');
-    if (savedLang != null) {
-      _hasSavedLanguage = true;
-    }
     
     // Check if user is already logged in for session persistence
     final user = FirebaseAuth.instance.currentUser;
@@ -70,6 +66,9 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
     }
     
     setState(() {
+      if (savedLang != null) {
+        _selectedLang = savedLang == 'ur' ? 'اردو' : 'English';
+      }
       _isLoading = false;
     });
     _controller.forward();
