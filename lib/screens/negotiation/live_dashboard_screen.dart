@@ -123,6 +123,144 @@ class _LiveDashboardScreenState extends State<LiveDashboardScreen>
     )..repeat(reverse: true);
 
     _startFirestoreListeners();
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _showSuccessDialog();
+    });
+  }
+
+  void _showSuccessDialog() {
+    final loc = context.loc;
+    final isUrdu = context.isUrdu;
+    
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext context) {
+        return Dialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(24),
+          ),
+          elevation: 0,
+          backgroundColor: Colors.transparent,
+          child: Container(
+            padding: const EdgeInsets.all(24),
+            decoration: BoxDecoration(
+              color: const Color(0xFFFDFBF7),
+              shape: BoxShape.rectangle,
+              borderRadius: BorderRadius.circular(24),
+              border: Border.all(color: const Color(0xFFE6DFD3), width: 1.5),
+              boxShadow: const [
+                BoxShadow(
+                  color: Colors.black12,
+                  blurRadius: 20,
+                  offset: Offset(0, 10),
+                ),
+              ],
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 80,
+                  height: 80,
+                  decoration: const BoxDecoration(
+                    color: Color(0xFFEDF3E1),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(
+                    Icons.check_circle_outline_rounded,
+                    color: Color(0xFF5A8E40),
+                    size: 48,
+                  ),
+                ),
+                const SizedBox(height: 24),
+                Text(
+                  isUrdu ? 'ایونٹ کامیابی سے لانچ ہو گیا!' : 'Event Launched Successfully!',
+                  textAlign: TextAlign.center,
+                  style: loc.fontStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                    color: const Color(0xFF7A4E1E),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  isUrdu
+                      ? 'ہمارے AI ایجنٹس نے تصدیق شدہ وینڈرز کے ساتھ بات چیت شروع کر دی ہے۔ آپ براہ راست پیشرفت دیکھ سکتے ہیں یا ہوم اسکرین پر واپس جا سکتے ہیں۔'
+                      : 'Our AI Agents have started negotiating with verified vendors. You can monitor the live progress here, or return to the home screen anytime.',
+                  textAlign: TextAlign.center,
+                  style: loc.fontStyle(
+                    fontSize: 14,
+                    color: const Color(0xFF555555),
+                  ),
+                ),
+                const SizedBox(height: 28),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton(
+                        style: OutlinedButton.styleFrom(
+                          side: const BorderSide(color: Color(0xFF7A4E1E), width: 1.5),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(30),
+                          ),
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                        ),
+                        onPressed: () {
+                          Navigator.of(context).pop(); // Close dialog
+                          Navigator.of(context).popUntil((route) => route.isFirst); // Go to Home
+                        },
+                        child: Text(
+                          isUrdu ? 'ہوم اسکرین' : 'Go to Home',
+                          style: loc.fontStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.bold,
+                            color: const Color(0xFF7A4E1E),
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Container(
+                        decoration: BoxDecoration(
+                          gradient: const LinearGradient(
+                            colors: [Color(0xFFD18D55), Color(0xFFC47035)],
+                          ),
+                          borderRadius: BorderRadius.circular(30),
+                        ),
+                        child: ElevatedButton(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.transparent,
+                            shadowColor: Colors.transparent,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(30),
+                            ),
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                          ),
+                          onPressed: () {
+                            Navigator.of(context).pop(); // Close dialog to show dashboard
+                          },
+                          child: Text(
+                            isUrdu ? 'لائیو دیکھیں' : 'Watch Live',
+                            style: loc.fontStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
   }
 
   /// NFR-PERF-03: Firestore-driven updates reflect within 2 seconds of agent writing.
@@ -300,7 +438,7 @@ class _LiveDashboardScreenState extends State<LiveDashboardScreen>
                               isUrdu ? Icons.arrow_forward : Icons.arrow_back,
                               color: const Color(0xFF7A4E1E),
                             ),
-                            onPressed: () => Navigator.pop(context),
+                            onPressed: () => Navigator.of(context).popUntil((route) => route.isFirst),
                           ),
                           Expanded(
                             child: Column(

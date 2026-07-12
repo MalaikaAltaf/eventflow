@@ -50,11 +50,6 @@ class NegotiationService {
       },
     );
 
-    batch.update(
-      _db.collection('events').doc(eventId).collection('negotiations').doc(vendorId),
-      {'status': 'deal', 'finalPrice': amount},
-    );
-
     await batch.commit();
 
     // FR-VND-03: notify backend so agent can confirm the deal

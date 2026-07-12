@@ -100,7 +100,6 @@ class _MessageBubble extends StatelessWidget {
   Widget build(BuildContext context) {
     final sender = data['sender'] as String? ?? 'system';
     final content = data['content'] as String? ?? '';
-    final messageType = data['messageType'] as String? ?? 'offer';
     final offerAmount = data['offerAmount'] as num?;
     final isAgent = sender == 'agent';
     final isSystem = sender == 'system';

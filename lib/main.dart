@@ -13,7 +13,6 @@ import 'screens/onboarding/vendor_onboarding_screen.dart';
 import 'screens/home/vendor_home_screen.dart';
 import 'screens/dashboard/home_screen.dart';
 import 'screens/negotiation/vendor_negotiation_detail_screen.dart';
-import 'screens/setup/event_type_screen.dart';
 
 // Dummy screens for GoRouter
 class DummyScreen extends StatelessWidget {
