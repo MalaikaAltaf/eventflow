@@ -688,6 +688,23 @@ class _LiveDashboardScreenState extends State<LiveDashboardScreen>
                                   height: isUrdu ? 1.8 : 1.4,
                                 ),
                               ),
+                              const SizedBox(height: 24),
+                              ElevatedButton(
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: AppColors.goldenBrown,
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(30),
+                                  ),
+                                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                                ),
+                                onPressed: () {
+                                  Navigator.of(context).popUntil((route) => route.isFirst);
+                                },
+                                child: Text(
+                                  isUrdu ? 'بجٹ تبدیل کریں (ہوم اسکرین)' : 'Adjust Budget (Go Home)',
+                                  style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white),
+                                ),
+                              ),
                             ] else ...[
                               const SizedBox(
                                 width: 50,
