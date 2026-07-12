@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:easy_localization/easy_localization.dart';
 import 'app_localizations.dart';
 
-/// A stateful wrapper that provides [AppLocalizations] to the entire widget tree.
+/// A wrapper provider for backward compatibility. Directs translation calls to EasyLocalization.
 class LanguageProvider extends StatefulWidget {
   final Widget child;
 
@@ -18,72 +19,28 @@ class LanguageProvider extends StatefulWidget {
 }
 
 class _LanguageProviderState extends State<LanguageProvider> {
-  AppLanguage _language = AppLanguage.englishRomanUrdu;
-
-  AppLocalizations get loc => AppLocalizations(_language);
-  AppLanguage get language => _language;
-  bool get isUrdu => _language == AppLanguage.urdu;
-
-  void setLanguage(AppLanguage lang) {
-    setState(() {
-      _language = lang;
-    });
-  }
-
-  /// Convenience: convert dropdown string to enum
   void setLanguageFromString(String value) {
-    switch (value) {
-      case 'اردو':
-        setLanguage(AppLanguage.urdu);
-        break;
-      case 'English':
-        setLanguage(AppLanguage.english);
-        break;
-      default:
-        setLanguage(AppLanguage.englishRomanUrdu);
+    if (value == 'اردو') {
+      context.setLocale(const Locale('ur'));
+    } else {
+      context.setLocale(const Locale('en'));
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    return _LanguageInherited(
-      loc: loc,
-      isUrdu: isUrdu,
-      child: widget.child,
-    );
-  }
-}
-
-/// InheritedWidget so descendants can access localization via context.
-class _LanguageInherited extends InheritedWidget {
-  final AppLocalizations loc;
-  final bool isUrdu;
-
-  const _LanguageInherited({
-    required this.loc,
-    required this.isUrdu,
-    required super.child,
-  });
-
-  static _LanguageInherited? maybeOf(BuildContext context) {
-    return context.dependOnInheritedWidgetOfExactType<_LanguageInherited>();
-  }
-
-  @override
-  bool updateShouldNotify(_LanguageInherited oldWidget) {
-    return loc.language != oldWidget.loc.language;
+    return widget.child;
   }
 }
 
 /// Extension on BuildContext for easy access.
 extension LanguageContext on BuildContext {
   AppLocalizations get loc {
-    final inherited = _LanguageInherited.maybeOf(this);
-    return inherited?.loc ?? AppLocalizations(AppLanguage.englishRomanUrdu);
+    final isUr = locale.languageCode == 'ur';
+    return AppLocalizations(isUr ? AppLanguage.urdu : AppLanguage.english);
   }
 
   bool get isUrdu {
-    final inherited = _LanguageInherited.maybeOf(this);
-    return inherited?.isUrdu ?? false;
+    return locale.languageCode == 'ur';
   }
 }

@@ -334,6 +334,30 @@ class _VendorProfileScreenState extends State<VendorProfileScreen> {
             height: 56,
             child: OutlinedButton.icon(
               style: OutlinedButton.styleFrom(
+                side: const BorderSide(color: AppColors.goldenBrown),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
+                foregroundColor: AppColors.goldenBrown,
+              ),
+              icon: const Icon(Icons.language),
+              label: Text(
+                context.locale.languageCode == 'ur' ? 'English (انگریزی)' : 'اردو (Urdu)',
+                style: GoogleFonts.inter(fontSize: 16, fontWeight: FontWeight.w600),
+              ),
+              onPressed: () {
+                if (context.locale.languageCode == 'ur') {
+                  context.setLocale(const Locale('en'));
+                } else {
+                  context.setLocale(const Locale('ur'));
+                }
+                setState(() {});
+              },
+            ),
+          ),
+          const SizedBox(height: 16),
+          SizedBox(
+            height: 56,
+            child: OutlinedButton.icon(
+              style: OutlinedButton.styleFrom(
                 side: const BorderSide(color: AppColors.strawRed),
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
                 foregroundColor: AppColors.strawRed,

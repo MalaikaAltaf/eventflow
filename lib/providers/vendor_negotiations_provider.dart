@@ -69,10 +69,10 @@ bool isExpired(NegotiationSummary n) {
   return n.status == 'pending' && DateTime.now().isAfter(n.expiresAt);
 }
 
-// Ensure background writes only trigger once per item
-final Set<String> _alreadyMarked = {};
-
 final vendorNegotiationsProvider = StreamProvider.family<VendorNegotiationsData, String>((ref, uid) {
+  final alreadyMarked = <String>{};
+  ref.onDispose(alreadyMarked.clear);
+
   final query = FirebaseFirestore.instance
       .collection('negotiations')
       .where('vendorFirebaseUid', isEqualTo: uid);
@@ -81,6 +81,7 @@ final vendorNegotiationsProvider = StreamProvider.family<VendorNegotiationsData,
     final pendingList = <NegotiationSummary>[];
     final activeList = <NegotiationSummary>[];
     final closedList = <NegotiationSummary>[];
+    final expiredNegotiationIds = <String>[];
 
     final service = ref.read(negotiationServiceProvider);
 
@@ -88,9 +89,9 @@ final vendorNegotiationsProvider = StreamProvider.family<VendorNegotiationsData,
       final item = NegotiationSummary.fromFirestore(doc);
 
       if (isExpired(item)) {
-        if (!_alreadyMarked.contains(item.negotiationId)) {
-          _alreadyMarked.add(item.negotiationId);
-          service.markExpired(item.negotiationId).catchError((_) {});
+        if (!alreadyMarked.contains(item.negotiationId)) {
+          alreadyMarked.add(item.negotiationId);
+          expiredNegotiationIds.add(item.negotiationId);
         }
         closedList.add(item);
       } else {
@@ -105,6 +106,10 @@ final vendorNegotiationsProvider = StreamProvider.family<VendorNegotiationsData,
           }
         }
       }
+    }
+
+    for (final negotiationId in expiredNegotiationIds) {
+      service.markExpired(negotiationId).catchError((_) {});
     }
 
     // Sort locally by lastActivity descending

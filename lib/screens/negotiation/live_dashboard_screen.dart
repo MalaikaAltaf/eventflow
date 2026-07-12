@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart' hide TextDirection;
 import 'package:animated_flip_counter/animated_flip_counter.dart';
@@ -112,6 +113,7 @@ class _LiveDashboardScreenState extends State<LiveDashboardScreen>
   final Map<String, VendorNegotiationState> _stateMap = {};
   bool _allFinished = false;
   bool _isLoading = true;
+  String _eventStatus = 'draft';
 
   @override
   void initState() {
@@ -268,10 +270,13 @@ class _LiveDashboardScreenState extends State<LiveDashboardScreen>
   void _startFirestoreListeners() {
     final db = FirebaseFirestore.instance;
 
+    final currentUserId = FirebaseAuth.instance.currentUser?.uid ?? '';
+
     // Listen to all negotiations for this event
     final sub = db
         .collection('negotiations')
         .where('eventFirestoreId', isEqualTo: widget.eventFirestoreId)
+        .where('customerFirebaseUid', isEqualTo: currentUserId)
         .snapshots()
         .listen((snapshot) {
       if (!mounted) return;
@@ -309,6 +314,9 @@ class _LiveDashboardScreenState extends State<LiveDashboardScreen>
       final data = eventSnap.data();
       if (data == null) return;
       final status = data['status'] as String? ?? 'draft';
+      setState(() {
+        _eventStatus = status;
+      });
       if (status == 'ready' || status == 'cancelled') {
         setState(() {
           _isLoading = false;
@@ -653,32 +661,99 @@ class _LiveDashboardScreenState extends State<LiveDashboardScreen>
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            const Icon(Icons.info_outline, size: 64, color: AppColors.goldenBrown),
-                            const SizedBox(height: 16),
-                            Text(
-                              isUrdu
-                                  ? 'اس شہر میں منتخب کردہ کیٹیگریز کے لیے کوئی تصدیق شدہ وینڈر نہیں ملا۔'
-                                  : 'No verified vendors matched for the selected categories in this city.',
-                              textAlign: TextAlign.center,
-                              style: loc.fontStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.w600,
-                                color: const Color(0xFF7A4E1E),
-                                height: isUrdu ? 1.8 : 1.4,
+                            if (_eventStatus == 'ready' || _eventStatus == 'cancelled') ...[
+                              const Icon(Icons.info_outline, size: 64, color: AppColors.goldenBrown),
+                              const SizedBox(height: 16),
+                              Text(
+                                isUrdu
+                                    ? 'اس شہر میں منتخب کردہ کیٹیگریز کے لیے کوئی تصدیق شدہ وینڈر نہیں ملا۔'
+                                    : 'No verified vendors matched for the selected categories in this city.',
+                                textAlign: TextAlign.center,
+                                style: loc.fontStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w600,
+                                  color: const Color(0xFF7A4E1E),
+                                  height: isUrdu ? 1.8 : 1.4,
+                                ),
                               ),
-                            ),
-                            const SizedBox(height: 8),
-                            Text(
-                              isUrdu
-                                  ? 'براہ کرم اپنا بجٹ تبدیل کریں یا دیگر کیٹیگریز منتخب کریں۔'
-                                  : 'Please try adjusting your budget or selected categories.',
-                              textAlign: TextAlign.center,
-                              style: loc.fontStyle(
-                                fontSize: 13,
-                                color: const Color(0xFF888888),
-                                height: isUrdu ? 1.8 : 1.4,
+                              const SizedBox(height: 8),
+                              Text(
+                                isUrdu
+                                    ? 'براہ کرم اپنا بجٹ تبدیل کریں یا دیگر کیٹیگریز منتخب کریں۔'
+                                    : 'Please try adjusting your budget or selected categories.',
+                                textAlign: TextAlign.center,
+                                style: loc.fontStyle(
+                                  fontSize: 13,
+                                  color: const Color(0xFF888888),
+                                  height: isUrdu ? 1.8 : 1.4,
+                                ),
                               ),
-                            ),
+                              const SizedBox(height: 24),
+                              ElevatedButton(
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: AppColors.goldenBrown,
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(30),
+                                  ),
+                                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                                ),
+                                onPressed: () {
+                                  Navigator.of(context).popUntil((route) => route.isFirst);
+                                },
+                                child: Text(
+                                  isUrdu ? 'بجٹ تبدیل کریں (ہوم اسکرین)' : 'Adjust Budget (Go Home)',
+                                  style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white),
+                                ),
+                              ),
+                            ] else ...[
+                              const SizedBox(
+                                width: 50,
+                                height: 50,
+                                child: CircularProgressIndicator(color: AppColors.goldenBrown, strokeWidth: 3),
+                              ),
+                              const SizedBox(height: 24),
+                              Text(
+                                isUrdu
+                                    ? 'بات چیت کی جا رہی ہے...'
+                                    : 'Negotiations in progress...',
+                                style: loc.fontStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.bold,
+                                  color: const Color(0xFF7A4E1E),
+                                ),
+                              ),
+                              const SizedBox(height: 12),
+                              Text(
+                                isUrdu
+                                    ? 'ہمارا AI ایجنٹ وینڈرز کے ساتھ رابطے میں ہے۔ آپ ہوم اسکرین پر واپس جا سکتے ہیں، بات چیت پس منظر میں جاری رہے گی۔'
+                                    : 'Our AI is contacting vendors. You can safely return to the home screen — negotiations will continue in the background.',
+                                textAlign: TextAlign.center,
+                                style: loc.fontStyle(
+                                  fontSize: 14,
+                                  color: const Color(0xFF666666),
+                                  height: isUrdu ? 1.6 : 1.3,
+                                ),
+                              ),
+                              const SizedBox(height: 24),
+                              OutlinedButton.icon(
+                                icon: const Icon(Icons.home_outlined, color: Color(0xFF7A4E1E)),
+                                label: Text(
+                                  isUrdu ? 'ہوم اسکرین پر جائیں' : 'Go to Home Screen',
+                                  style: const TextStyle(fontWeight: FontWeight.bold),
+                                ),
+                                style: OutlinedButton.styleFrom(
+                                  foregroundColor: const Color(0xFF7A4E1E),
+                                  side: const BorderSide(color: Color(0xFF7A4E1E), width: 1.5),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(30),
+                                  ),
+                                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                                ),
+                                onPressed: () {
+                                  Navigator.of(context).popUntil((route) => route.isFirst);
+                                },
+                              ),
+                            ],
                           ],
                         ),
                       ),

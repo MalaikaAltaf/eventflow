@@ -93,7 +93,27 @@ final negotiationDetailProvider = StreamProvider.family<NegotiationDetail, Strin
       .collection('negotiations')
       .doc(negotiationId)
       .snapshots()
-      .map((doc) => NegotiationDetail.fromFirestore(doc));
+      .map((doc) {
+        if (!doc.exists) {
+          return NegotiationDetail(
+            negotiationId: negotiationId,
+            vendorId: '',
+            eventId: '',
+            eventType: 'other',
+            eventDate: DateTime.now(),
+            city: '',
+            guestCount: 0,
+            requirement: '',
+            budgetAllocated: 0,
+            vendorBasePrice: 0,
+            currentOffer: 0,
+            status: 'missing',
+            isVendorTurn: false,
+            offerCount: 0,
+          );
+        }
+        return NegotiationDetail.fromFirestore(doc);
+      });
 });
 
 final negotiationMessagesProvider = StreamProvider.family<List<NegotiationMessage>, String>((ref, negotiationId) {

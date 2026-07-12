@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:easy_localization/easy_localization.dart' hide TextDirection;
 import 'package:google_fonts/google_fonts.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/theme/app_colors.dart';
@@ -22,6 +23,57 @@ class CustomerProfileScreen extends ConsumerStatefulWidget {
 
 class _CustomerProfileScreenState extends ConsumerState<CustomerProfileScreen> {
   String? _customDisplayName;
+
+  void _showLanguagePicker(BuildContext context) {
+    final isUr = context.isUrdu;
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (context) {
+        return Container(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                isUr ? 'زبان منتخب کریں' : 'Select Language',
+                style: GoogleFonts.inter(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 16),
+              ListTile(
+                leading: const Icon(Icons.language, color: AppColors.goldenBrown),
+                title: const Text('English'),
+                trailing: !isUr ? const Icon(Icons.check, color: AppColors.goldenBrown) : null,
+                onTap: () async {
+                  await context.setLocale(const Locale('en'));
+                  if (context.mounted) {
+                    Navigator.pop(context);
+                    setState(() {});
+                  }
+                },
+              ),
+              const Divider(),
+              ListTile(
+                leading: const Icon(Icons.language, color: AppColors.goldenBrown),
+                title: const Text('اردو (Urdu)', style: TextStyle(fontFamily: 'NotoNastaliqUrdu')),
+                trailing: isUr ? const Icon(Icons.check, color: AppColors.goldenBrown) : null,
+                onTap: () async {
+                  await context.setLocale(const Locale('ur'));
+                  if (context.mounted) {
+                    Navigator.pop(context);
+                    setState(() {});
+                  }
+                },
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
 
   void _showEditNameDialog(BuildContext context, User? user, AppLocalizations loc) {
     if (user == null) return;
@@ -248,17 +300,39 @@ class _CustomerProfileScreenState extends ConsumerState<CustomerProfileScreen> {
                           ),
                         ),
                         _ActionTile(
-                          icon: Icons.logout,
-                          label: loc.get('sign_out'),
-                          color: AppColors.strawRed,
-                          onTap: () async {
-                            await FirebaseAuth.instance.signOut();
-                            if (context.mounted) {
-                              context.go('/');
-                            }
-                          },
+                          icon: Icons.language,
+                          label: context.isUrdu ? 'زبان (Language)' : 'Language (زبان)',
+                          color: AppColors.goldenBrown,
+                          onTap: () => _showLanguagePicker(context),
                         ),
                       ],
+                    ),
+                    const SizedBox(height: 16),
+                    SizedBox(
+                      width: double.infinity,
+                      height: 50,
+                      child: OutlinedButton.icon(
+                        icon: const Icon(Icons.logout, color: AppColors.strawRed),
+                        label: Text(
+                          loc.get('sign_out'),
+                          style: loc.fontStyle(
+                            fontWeight: FontWeight.bold,
+                            color: AppColors.strawRed,
+                          ),
+                        ),
+                        style: OutlinedButton.styleFrom(
+                          side: const BorderSide(color: AppColors.strawRed, width: 1.5),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        onPressed: () async {
+                          await FirebaseAuth.instance.signOut();
+                          if (context.mounted) {
+                            context.go('/');
+                          }
+                        },
+                      ),
                     ),
 
                     const SizedBox(height: 28),

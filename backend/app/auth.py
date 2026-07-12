@@ -5,6 +5,7 @@ NFR-SEC-03: Role-based authorization enforced here.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from functools import lru_cache
 
@@ -56,10 +57,10 @@ class FirebaseUser:
 
 
 async def _fetch_role(uid: str) -> str | None:
-    """Look up the user's role from Firestore users/{uid}.role."""
+    """Look up the user's role from Firestore users/{uid}.role without blocking the event loop."""
     try:
         db = get_firestore_client()
-        doc = db.collection("users").document(uid).get()
+        doc = await asyncio.to_thread(lambda: db.collection("users").document(uid).get())
         if doc.exists:
             return doc.to_dict().get("role")
     except Exception as exc:

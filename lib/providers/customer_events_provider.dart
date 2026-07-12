@@ -36,9 +36,19 @@ class CustomerEvent {
       totalBudget: (data['totalBudget'] as num?)?.toInt() ?? 0,
       status: data['status'] as String? ?? 'draft',
       package: data['package'] as Map<String, dynamic>?,
-      createdAt: data['createdAt'] != null
-          ? DateTime.tryParse(data['createdAt'] as String) ?? DateTime.now()
-          : DateTime.now(),
+      createdAt: () {
+        final createdAtValue = data['createdAt'];
+        if (createdAtValue is Timestamp) {
+          return createdAtValue.toDate();
+        }
+        if (createdAtValue is DateTime) {
+          return createdAtValue;
+        }
+        if (createdAtValue is String) {
+          return DateTime.tryParse(createdAtValue) ?? DateTime.now();
+        }
+        return DateTime.now();
+      }(),
     );
   }
 }

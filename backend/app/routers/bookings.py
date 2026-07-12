@@ -100,8 +100,13 @@ async def confirm_booking(
         # FR-BK-03: send vendor and customer notifications
         await _notify_parties_booking_confirmed(db, user.uid, vendor_id, event_id, final_price)
 
-    # Update event status to 'booked' if all vendors confirmed
-    await update_event_status(db, event_id, "booked")
+    # Update event status to 'booked' only when all negotiations for this event are confirmed
+    negotiation_states_result = await db.execute(select(Negotiation.status).where(Negotiation.event_id == event_id))
+    negotiation_states = [status for status in negotiation_states_result.scalars().all() if status is not None]
+    if negotiation_states and all(status == "deal" for status in negotiation_states):
+        await update_event_status(db, event_id, "booked")
+    else:
+        logger.info("Event %s is not fully booked yet; negotiation states: %s", event_id, negotiation_states)
     await db.commit()
 
     logger.info(
