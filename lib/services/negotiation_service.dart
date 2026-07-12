@@ -47,6 +47,7 @@ class NegotiationService {
         'offerAmount': amount,
         'messageType': 'accept',
         'timestamp': FieldValue.serverTimestamp(),
+      },
     );
 
     await batch.commit();
