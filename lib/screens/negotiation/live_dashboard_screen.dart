@@ -300,6 +300,7 @@ class _LiveDashboardScreenState extends State<LiveDashboardScreen>
     // Listen to all negotiations for this event. We rebuild from the full
     // snapshot so that newly-created, updated, or terminal negotiations are
     // always reflected correctly on the customer dashboard.
+    debugPrint('[LiveDashboard] Starting Firestore listener for event: ${widget.eventFirestoreId}');
     final sub = db
         .collection('negotiations')
         .where('eventFirestoreId', isEqualTo: widget.eventFirestoreId)
@@ -308,9 +309,11 @@ class _LiveDashboardScreenState extends State<LiveDashboardScreen>
           (snapshot) {
             if (!mounted) return;
 
+            debugPrint('[LiveDashboard] Received snapshot: ${snapshot.docs.length} docs');
             final nextStateMap = <String, VendorNegotiationState>{};
             for (final doc in snapshot.docs) {
               final data = doc.data();
+              debugPrint('[LiveDashboard]   - ${doc.id}: ${data['vendorName']} (${data['status']})');
               final state = VendorNegotiationState.fromFirestore(data, doc.id);
               // Key by negotiationId (Firestore doc ID) — unique per vendor
               nextStateMap[state.negotiationId] = state;
@@ -323,6 +326,7 @@ class _LiveDashboardScreenState extends State<LiveDashboardScreen>
               _isLoading = false;
             });
 
+            debugPrint('[LiveDashboard] State updated: ${_stateMap.length} negotiations, loading=$_isLoading');
             _checkIfAllFinished();
           },
           onError: (e) {
