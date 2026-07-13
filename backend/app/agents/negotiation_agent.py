@@ -213,8 +213,12 @@ async def run_negotiation_agent(
         
         if allocation:
             allocated_budget = allocation.allocated_amount
-            max_budget = allocation.max_budget or int(allocation.allocated_amount * 1.1)
+            # Use customer's explicit max_budget if set, else use allocated_amount
+            # as hard cap (NO 10% buffer — customer's budget is final)
+            max_budget = allocation.max_budget or allocation.allocated_amount
         else:
+            # Fallback: no allocation found (shouldn't happen in normal flow)
+            # Use 85% of asking price as allocated, asking price as hard max
             allocated_budget = int(neg.asking_price * 0.85)
             max_budget = neg.asking_price
 
@@ -239,31 +243,8 @@ async def run_negotiation_agent(
             max_rounds=max_rounds,
         )
 
-        # If the vendor's latest counter is already within budget, accept it immediately.
-        if vendor_message_content and vendor_offer_amount is not None:
-            if should_accept_vendor_price(vendor_offer_amount, allocated_budget, max_budget, floor_price):
-                amount = _normalize_offer_amount(vendor_offer_amount, neg.asking_price, allocated_budget, max_budget, current_round, floor_price)
-                await append_negotiation_message(
-                    db, negotiation_id,
-                    sender="agent", content=f"We accept your price of {amount:,} PKR.",
-                    message_type="accept", offer_amount=amount,
-                )
-                await update_negotiation_status(
-                    db, negotiation_id,
-                    status="deal", final_price=amount,
-                    is_vendor_turn=False, last_processed_message_id=vendor_message_id,
-                )
-                neg.processing_locked_at = None
-                await db.commit()
-                logger.info("Negotiation %s: accepted vendor counter %d PKR within budget", negotiation_id, amount)
-                from app.services.notifications import notify_vendor_on_negotiation_update
-                await notify_vendor_on_negotiation_update(
-                    db, negotiation_id,
-                    title="Agent Accepted Offer!",
-                    body=f"The agent has accepted your counter-offer of PKR {amount:,}!",
-                    action_type="agent_accept",
-                )
-                return {"action": "accept_vendor_price", "amount": amount}
+        # Keep the negotiation flow active. Vendor acceptance is handled manually
+        # through the vendor-side action so the agent does not auto-close the deal.
 
         # Build message thread for context
         messages: list[dict] = [{"role": "system", "content": system_prompt}]
@@ -333,12 +314,9 @@ async def run_negotiation_agent(
         # Release processing lock
         neg.processing_locked_at = None
 
-        # Determine which tool was called from the result keys
-        if "amount" in result and "message" in result:
-            action = "send_offer"
-        elif "amount" in result:
-            action = "accept_vendor_price"
-        elif "reason" in result:
+        # The agent should continue negotiating and leave final acceptance to the vendor.
+        # Auto-accept is disabled by policy; the vendor must manually confirm any deal.
+        if "reason" in result:
             action = "walk_away"
         else:
             action = "send_offer"  # fallback
@@ -370,31 +348,6 @@ async def run_negotiation_agent(
                 action_type="agent_offer",
             )
             return {"action": "send_offer", "amount": offer_amount, "round": new_round}
-
-        elif action == "accept_vendor_price":
-            amount = _normalize_offer_amount(result.get("amount"), neg.asking_price, allocated_budget, max_budget, current_round, floor_price)
-            if not should_accept_vendor_price(amount, allocated_budget, max_budget, floor_price):
-                amount = _normalize_offer_amount(allocated_budget, neg.asking_price, allocated_budget, max_budget, current_round, floor_price)
-            await append_negotiation_message(
-                db, negotiation_id,
-                sender="agent", content=f"We accept your price of {amount:,} PKR.",
-                message_type="accept", offer_amount=amount,
-            )
-            await update_negotiation_status(
-                db, negotiation_id,
-                status="deal", final_price=amount,
-                is_vendor_turn=False, last_processed_message_id=vendor_message_id,
-            )
-            await db.commit()
-            logger.info("Negotiation %s: agent accepted %d PKR. Deal!", negotiation_id, amount)
-            from app.services.notifications import notify_vendor_on_negotiation_update
-            await notify_vendor_on_negotiation_update(
-                db, negotiation_id,
-                title="Agent Accepted Offer!",
-                body=f"The agent has accepted your counter-offer of PKR {amount:,}!",
-                action_type="agent_accept",
-            )
-            return {"action": "accept_vendor_price", "amount": amount}
 
         else:  # walk_away
             reason = result.get("reason", "Budget not aligned.")

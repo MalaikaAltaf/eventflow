@@ -75,26 +75,6 @@ NEGOTIATION_TOOLS = [
     {
         "type": "function",
         "function": {
-            "name": "accept_vendor_price",
-            "description": (
-                "Accept the vendor's current asking price as-is. Use this when the vendor's "
-                "price is at or below the allocated budget, or when further negotiation is unlikely to help."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "amount": {
-                        "type": "number",
-                        "description": "The vendor price being accepted (in PKR).",
-                    },
-                },
-                "required": ["amount"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
             "name": "walk_away",
             "description": (
                 "End the negotiation without a deal. Use this when the vendor's price "
@@ -121,8 +101,9 @@ AGGREGATOR_TOOLS = [
             "name": "compile_package",
             "description": (
                 "Review all closed negotiations for the event and select the best vendor "
-                "per category to form the final recommended package. Compute savings and "
-                "flag any categories that exceed the customer's total budget."
+                "per category to form the final recommended package. "
+                "Only select the best vendor_id and negotiation_id per category — "
+                "the backend will compute all prices and savings from the database."
             ),
             "parameters": {
                 "type": "object",
@@ -130,46 +111,32 @@ AGGREGATOR_TOOLS = [
                     "best_vendors": {
                         "type": "object",
                         "description": (
-                            "Mapping of category → selected vendor details. "
-                            "Each value is an object with 'vendor_id', 'business_name', "
-                            "'final_price', and 'negotiation_id'."
+                            "Mapping of category → selected vendor. "
+                            "Each value must include 'vendor_id', 'negotiation_id', and 'business_name'. "
+                            "Always prefer vendors with 'deal' status and the lowest final_price. "
+                            "Do NOT include asking_price, savings, or total fields — the backend computes those."
                         ),
                         "additionalProperties": {
                             "type": "object",
                             "properties": {
                                 "vendor_id": {"type": "string"},
-                                "business_name": {"type": "string"},
-                                "final_price": {"type": "number"},
                                 "negotiation_id": {"type": "string"},
+                                "business_name": {"type": "string"},
                             },
+                            "required": ["vendor_id", "negotiation_id", "business_name"],
                         },
-                    },
-                    "total_cost": {
-                        "type": "number",
-                        "description": "Sum of all selected vendor prices (PKR).",
-                    },
-                    "total_savings": {
-                        "type": "number",
-                        "description": "Total savings vs. vendors' original asking prices (PKR).",
-                    },
-                    "savings_percentage": {
-                        "type": "number",
-                        "description": "savings / sum(asking_prices) * 100",
                     },
                     "budget_exceeded_categories": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "Categories where the selected price exceeds the allocated budget.",
+                        "description": "Categories where the selected vendor's final price exceeds the allocated budget.",
                     },
                     "summary": {
                         "type": "string",
-                        "description": "A human-readable optimization summary for the customer.",
+                        "description": "A concise human-readable summary of the package for the customer.",
                     },
                 },
-                "required": [
-                    "best_vendors", "total_cost", "total_savings",
-                    "savings_percentage", "budget_exceeded_categories", "summary",
-                ],
+                "required": ["best_vendors", "budget_exceeded_categories", "summary"],
             },
         },
     }
@@ -205,7 +172,7 @@ Your constraints:
 Strategy:
 - **First Round (Opening Offer)**: Start with a conservative opening offer that stays within the customer's budget. Prefer an offer no higher than the lower of `allocated_budget` and `max_budget`, and never above `max_budget`. Never offer below the vendor's floor price.
 - **Counter Offers**: If the vendor counters, make a measured counter-offer that stays below the last offer and never above `max_budget`. The goal is to land near the allocated budget, not to overshoot it. Never offer below the vendor's floor price.
-- **Agreement**: Call `accept_vendor_price` only when the vendor's price is at or below the customer's `allocated_budget` and the price is acceptable for the category. If the vendor's latest counter is already inside the budget envelope, accept it immediately instead of continuing to negotiate.
+- **Agreement**: Do not auto-accept the vendor's price. Leave the final decision to the vendor's manual acceptance action. Continue negotiating until the vendor accepts or the negotiation is closed by a manual reject or timeout.
 - **Walk Away**: Call `walk_away` if the negotiation rounds are exhausted and the vendor's price remains above `max_budget` or if the price is clearly outside the customer's budget.
 - Keep messages professional, concise, and friendly.
 - Never reveal the customer's total event budget — only discuss this vendor's category.

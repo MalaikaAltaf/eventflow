@@ -17,6 +17,9 @@ class NegotiationDetail {
   final bool isVendorTurn;
   final int offerCount;
   final double? finalPrice;
+  // Backend-computed floor price (already factors in guest count & category).
+  // Use this for validation instead of re-multiplying minPrice * guestCount.
+  final double floorPrice;
 
   NegotiationDetail({
     required this.negotiationId,
@@ -34,6 +37,7 @@ class NegotiationDetail {
     required this.isVendorTurn,
     required this.offerCount,
     this.finalPrice,
+    this.floorPrice = 0,
   });
 
   factory NegotiationDetail.fromFirestore(DocumentSnapshot doc) {
@@ -45,15 +49,17 @@ class NegotiationDetail {
       eventType: data['eventType'] as String? ?? 'other',
       eventDate: (data['eventDate'] as Timestamp?)?.toDate() ?? DateTime.now(),
       city: data['city'] as String? ?? '',
-      guestCount: data['guestCount'] as int? ?? 0,
+      // Use num cast to handle both int and double from Firestore
+      guestCount: (data['guestCount'] as num?)?.toInt() ?? 0,
       requirement: data['requirement'] as String? ?? '',
-      budgetAllocated: (data['allocatedBudget'] ?? 0.0).toDouble(),
-      vendorBasePrice: (data['askingPrice'] ?? 0.0).toDouble(),
-      currentOffer: (data['currentOffer'] ?? 0.0).toDouble(),
+      budgetAllocated: (data['allocatedBudget'] as num?)?.toDouble() ?? 0.0,
+      vendorBasePrice: (data['askingPrice'] as num?)?.toDouble() ?? 0.0,
+      currentOffer: (data['currentOffer'] as num?)?.toDouble() ?? 0.0,
       status: data['status'] as String? ?? 'pending',
       isVendorTurn: data['isVendorTurn'] as bool? ?? false,
-      offerCount: data['offerCount'] as int? ?? 1,
-      finalPrice: data['finalPrice']?.toDouble(),
+      offerCount: (data['offerCount'] as num?)?.toInt() ?? 1,
+      finalPrice: (data['finalPrice'] as num?)?.toDouble(),
+      floorPrice: (data['floorPrice'] as num?)?.toDouble() ?? 0.0,
     );
   }
 }
@@ -81,47 +87,53 @@ class NegotiationMessage {
       messageId: doc.id,
       sender: data['sender'] as String? ?? 'agent',
       content: data['content'] as String? ?? '',
-      offerAmount: data['offerAmount']?.toDouble(),
+      offerAmount: (data['offerAmount'] as num?)?.toDouble(),
       messageType: data['messageType'] as String? ?? 'offer',
       timestamp: (data['timestamp'] as Timestamp?)?.toDate() ?? DateTime.now(),
     );
   }
 }
 
-final negotiationDetailProvider = StreamProvider.family<NegotiationDetail, String>((ref, negotiationId) {
+final negotiationDetailProvider =
+    StreamProvider.family<NegotiationDetail, String>((ref, negotiationId) {
   return FirebaseFirestore.instance
       .collection('negotiations')
       .doc(negotiationId)
       .snapshots()
       .map((doc) {
-        if (!doc.exists) {
-          return NegotiationDetail(
-            negotiationId: negotiationId,
-            vendorId: '',
-            eventId: '',
-            eventType: 'other',
-            eventDate: DateTime.now(),
-            city: '',
-            guestCount: 0,
-            requirement: '',
-            budgetAllocated: 0,
-            vendorBasePrice: 0,
-            currentOffer: 0,
-            status: 'missing',
-            isVendorTurn: false,
-            offerCount: 0,
-          );
-        }
-        return NegotiationDetail.fromFirestore(doc);
-      });
+    if (!doc.exists) {
+      return NegotiationDetail(
+        negotiationId: negotiationId,
+        vendorId: '',
+        eventId: '',
+        eventType: 'other',
+        eventDate: DateTime.now(),
+        city: '',
+        guestCount: 0,
+        requirement: '',
+        budgetAllocated: 0,
+        vendorBasePrice: 0,
+        currentOffer: 0,
+        status: 'missing',
+        isVendorTurn: false,
+        offerCount: 0,
+        floorPrice: 0,
+      );
+    }
+    return NegotiationDetail.fromFirestore(doc);
+  });
 });
 
-final negotiationMessagesProvider = StreamProvider.family<List<NegotiationMessage>, String>((ref, negotiationId) {
+final negotiationMessagesProvider =
+    StreamProvider.family<List<NegotiationMessage>, String>(
+        (ref, negotiationId) {
   return FirebaseFirestore.instance
       .collection('negotiations')
       .doc(negotiationId)
       .collection('messages')
       .orderBy('timestamp', descending: false)
       .snapshots()
-      .map((snapshot) => snapshot.docs.map((doc) => NegotiationMessage.fromFirestore(doc)).toList());
+      .map((snapshot) => snapshot.docs
+          .map((doc) => NegotiationMessage.fromFirestore(doc))
+          .toList());
 });

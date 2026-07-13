@@ -6,6 +6,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart' hide TextDirection;
 import '../../core/theme/app_colors.dart';
+import '../../services/backend_service.dart';
 import 'package:go_router/go_router.dart';
 
 // --- MODELS ---
@@ -31,6 +32,7 @@ class VendorPackage {
 
 class PackageVendor {
   final String vendorId;
+  final String negotiationId; // Postgres UUID — needed for /bookings/confirm
   final String vendorName;
   final String category;
   final double askingPrice;
@@ -41,6 +43,7 @@ class PackageVendor {
 
   PackageVendor({
     required this.vendorId,
+    required this.negotiationId,
     required this.vendorName,
     required this.category,
     required this.askingPrice,
@@ -114,6 +117,9 @@ class _BestCombinationScreenState extends State<BestCombinationScreen> with Tick
   /// Real Firestore stream — listens to events/{eventFirestoreId} and waits
   /// for the 'package' field to be written by the Aggregator Agent.
   /// FR-AGG-04, NFR-PERF-03: package appears in under 2s of agent writing it.
+  ///
+  /// HYBRID MODE: If package exists, use it (aggregator ran). If not, build
+  /// package from live negotiations collection (shows real-time deal status).
   Stream<VendorPackage> _firestorePackageStream() async* {
     final snapshots = FirebaseFirestore.instance
         .collection('events')
@@ -123,36 +129,97 @@ class _BestCombinationScreenState extends State<BestCombinationScreen> with Tick
     await for (final snap in snapshots) {
       final data = snap.data();
       if (data == null) continue;
+      
       final pkg = data['package'] as Map<String, dynamic>?;
-      if (pkg == null) continue; // aggregator hasn't finished yet
+      
+      // ── CASE 1: Aggregator package exists (authoritative) ────────────────
+      if (pkg != null && pkg['best_vendors'] != null) {
+        final bestVendors = pkg['best_vendors'] as Map<String, dynamic>;
+        final vendors = bestVendors.entries.map((entry) {
+          final v = entry.value as Map<String, dynamic>;
+          final finalNum = (v['final_price'] as num?)?.toDouble() ?? 0;
+          final askingRaw = (v['asking_price'] as num?)?.toDouble();
+          final askingNum = (askingRaw != null && askingRaw > 0) ? askingRaw : finalNum;
+          final savings = (askingNum - finalNum).clamp(0.0, double.infinity);
+          return PackageVendor(
+            vendorId: v['vendor_id'] as String? ?? '',
+            negotiationId: v['negotiation_id'] as String? ?? '',
+            vendorName: v['business_name'] as String? ?? entry.key,
+            category: entry.key,
+            askingPrice: askingNum,
+            negotiatedPrice: finalNum,
+            savings: savings,
+            confirmationStatus: 'pending',
+            vendorContact: '',
+          );
+        }).toList();
 
-      final bestVendors = pkg['best_vendors'] as Map<String, dynamic>? ?? {};
-      final vendors = bestVendors.entries.map((entry) {
-        final v = entry.value as Map<String, dynamic>;
-        final askingNum = (v['asking_price'] as num?)?.toDouble() ?? 0;
-        final finalNum = (v['final_price'] as num?)?.toDouble() ?? askingNum;
-        return PackageVendor(
-          vendorId: v['vendor_id'] as String? ?? '',
-          vendorName: v['business_name'] as String? ?? entry.key,
-          category: entry.key,
-          askingPrice: askingNum,
-          negotiatedPrice: finalNum,
-          savings: askingNum - finalNum,
-          confirmationStatus: 'pending',
-          vendorContact: '',
+        yield VendorPackage(
+          packageId: widget.eventFirestoreId,
+          totalCost: (pkg['total_cost'] as num?)?.toDouble() ?? 0,
+          totalAsking: vendors.fold(0.0, (s, v) => s + v.askingPrice),
+          totalSavings: (pkg['total_savings'] as num?)?.toDouble() ?? 0,
+          savingsPercent: (pkg['savings_percentage'] as num?)?.toDouble() ?? 0,
+          vendors: vendors,
+          optimizationReason: pkg['summary'] as String? ?? 'Best combination selected by AI.',
         );
-      }).toList();
+        break; // package is stable once written
+      }
+      
+      // ── CASE 2: No package yet — build from live negotiations ────────────
+      // This shows real-time status (e.g., vendor accepted but aggregator
+      // hasn't run yet). Uses current deal prices, not stale asking prices.
+      else {
+        final negsSnapshot = await FirebaseFirestore.instance
+            .collection('negotiations')
+            .where('eventFirestoreId', isEqualTo: widget.eventFirestoreId)
+            .get();
 
-      yield VendorPackage(
-        packageId: widget.eventFirestoreId,
-        totalCost: (pkg['total_cost'] as num?)?.toDouble() ?? 0,
-        totalAsking: vendors.fold(0.0, (s, v) => s + v.askingPrice),
-        totalSavings: (pkg['total_savings'] as num?)?.toDouble() ?? 0,
-        savingsPercent: (pkg['savings_percentage'] as num?)?.toDouble() ?? 0,
-        vendors: vendors,
-        optimizationReason: pkg['summary'] as String? ?? 'Best combination selected by AI.',
-      );
-      break; // package is stable once written
+        if (negsSnapshot.docs.isEmpty) continue;
+
+        final vendors = negsSnapshot.docs.map((doc) {
+          final d = doc.data();
+          final askingPrice = (d['askingPrice'] as num?)?.toDouble() ?? 0;
+          // Use finalPrice if deal/no_deal, else currentOffer (live negotiation)
+          final status = d['status'] as String? ?? 'pending';
+          final finalPrice = (d['finalPrice'] as num?)?.toDouble();
+          final currentOffer = (d['currentOffer'] as num?)?.toDouble() ?? askingPrice;
+          
+          final negotiatedPrice = (status == 'deal' && finalPrice != null)
+              ? finalPrice
+              : currentOffer;
+          
+          final savings = (askingPrice - negotiatedPrice).clamp(0.0, double.infinity);
+
+          return PackageVendor(
+            vendorId: d['vendorId'] as String? ?? '',
+            negotiationId: doc.id,
+            vendorName: d['vendorName'] as String? ?? 'Vendor',
+            category: d['category'] as String? ?? 'Unknown',
+            askingPrice: askingPrice,
+            negotiatedPrice: negotiatedPrice,
+            savings: savings,
+            confirmationStatus: status == 'deal' ? 'deal' : 'pending',
+            vendorContact: '',
+          );
+        }).toList();
+
+        final totalCost = vendors.fold(0.0, (s, v) => s + v.negotiatedPrice);
+        final totalAsking = vendors.fold(0.0, (s, v) => s + v.askingPrice);
+        final totalSavings = vendors.fold(0.0, (s, v) => s + v.savings);
+        final savingsPercent = totalAsking > 0 ? (totalSavings / totalAsking * 100) : 0.0;
+
+        yield VendorPackage(
+          packageId: widget.eventFirestoreId,
+          totalCost: totalCost,
+          totalAsking: totalAsking,
+          totalSavings: totalSavings,
+          savingsPercent: savingsPercent,
+          vendors: vendors,
+          optimizationReason: 'Live negotiation status (aggregator pending)',
+        );
+        // Don't break — keep listening for aggregator package
+      }
     }
   }
 
@@ -176,26 +243,74 @@ class _BestCombinationScreenState extends State<BestCombinationScreen> with Tick
     HapticFeedback.heavyImpact();
   }
 
-  Future<void> _submitBooking(double runningTotal, double runningSavings) async {
-    setState(() {
-      isSubmitting = true;
-    });
+  /// Real booking submission — calls POST /bookings/confirm on the backend.
+  /// [onDone] is called on the sheet's own setState so the button updates
+  /// correctly even inside the StatefulBuilder.
+  Future<void> _submitBooking(
+    double runningTotal,
+    double runningSavings,
+    void Function(void Function()) setSheetState,
+  ) async {
+    // Guard: all selected vendors must have a real negotiation ID
+    final selected = _loadedPackage!.vendors
+        .where((v) => selectedVendorIds.contains(v.vendorId))
+        .toList();
 
-    // Mocking the Firestore batch write delay
-    await Future.delayed(const Duration(seconds: 2));
+    if (selected.any((v) => v.negotiationId.isEmpty)) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Some vendor data is missing. Please go back and try again.'),
+          backgroundColor: Colors.redAccent,
+        ));
+      }
+      setSheetState(() => isSubmitting = false);
+      setState(() => isSubmitting = false);
+      return;
+    }
 
-    if (!mounted) return;
+    try {
+      final body = <String, dynamic>{
+        'event_id': widget.eventFirestoreId,
+        'vendors': selected.map((v) => {
+          'negotiation_id': v.negotiationId,
+          'vendor_id': v.vendorId,
+        }).toList(),
+      };
 
-    final newBookingId = 'EF-${DateTime.now().millisecondsSinceEpoch}';
-    
-    setState(() {
-      isSubmitting = false;
-      bookingId = newBookingId;
-      isConfirmSheetOpen = false;
-    });
+      final response = await BackendService.instance.post('/bookings/confirm', body: body);
+      final confirmedId = (response['booking_ids'] as List?)?.first?.toString()
+          ?? 'EF-${DateTime.now().millisecondsSinceEpoch}';
 
-    Navigator.pop(context); // Close the confirmation bottom sheet
-    _showSuccessSheet(newBookingId, runningSavings);
+      if (!mounted) return;
+
+      setSheetState(() => isSubmitting = false);
+      setState(() {
+        isSubmitting = false;
+        bookingId = confirmedId;
+        isConfirmSheetOpen = false;
+      });
+
+      Navigator.pop(context); // close confirmation sheet
+      _showSuccessSheet(confirmedId, runningSavings);
+    } on BackendException catch (e) {
+      if (!mounted) return;
+      setSheetState(() => isSubmitting = false);
+      setState(() => isSubmitting = false);
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('Booking failed: ${e.message}'),
+        backgroundColor: Colors.redAccent,
+        duration: const Duration(seconds: 6),
+      ));
+    } catch (e) {
+      if (!mounted) return;
+      setSheetState(() => isSubmitting = false);
+      setState(() => isSubmitting = false);
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('Booking failed: $e'),
+        backgroundColor: Colors.redAccent,
+        duration: const Duration(seconds: 6),
+      ));
+    }
   }
 
   void _showConfirmationSheet(double runningTotal, double runningSavings, String savingsPercentStr) {
@@ -388,22 +503,17 @@ class _BestCombinationScreenState extends State<BestCombinationScreen> with Tick
                                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
                                   elevation: 0,
                                 ),
-                                onPressed: () {
-                                  if (!acceptedTerms) {
-                                    _shakeTerms();
-                                  } else {
-                                    setSheetState(() => isSubmitting = true); // update local sheet state
-                                    _submitBooking(runningTotal, runningSavings).catchError((_) {
-                                      setSheetState(() => isSubmitting = false);
-                                      ScaffoldMessenger.of(context).showSnackBar(
-                                        SnackBar(
-                                          content: const Text("Booking failed. Please try again."),
-                                          action: SnackBarAction(label: "Retry", onPressed: () => _submitBooking(runningTotal, runningSavings)),
-                                        )
-                                      );
-                                    });
-                                  }
-                                },
+                                onPressed: isSubmitting
+                                    ? null
+                                    : () {
+                                        if (!acceptedTerms) {
+                                          _shakeTerms();
+                                        } else {
+                                          setSheetState(() => isSubmitting = true);
+                                          setState(() => isSubmitting = true);
+                                          _submitBooking(runningTotal, runningSavings, setSheetState);
+                                        }
+                                      },
                                 child: isSubmitting
                                   ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
                                   : Text("Confirm Booking", style: GoogleFonts.inter(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
@@ -625,19 +735,31 @@ class _BestCombinationScreenState extends State<BestCombinationScreen> with Tick
 
             final pkg = _loadedPackage!;
 
-            // Calculate computeds
+            // ── Compute running totals from selected vendors ──────────────
             double runningTotal = 0;
             double runningAsking = 0;
+            double runningSavings = 0;
             for (var v in pkg.vendors) {
               if (selectedVendorIds.contains(v.vendorId)) {
                 runningTotal += v.negotiatedPrice;
+                // askingPrice is now always >= negotiatedPrice (clamped in parser)
                 runningAsking += v.askingPrice;
+                runningSavings += v.savings; // already clamped ≥ 0 in parser
               }
             }
-            double runningSavings = runningAsking - runningTotal;
-            String savingsPercentStr = runningAsking > 0 ? ((runningSavings / runningAsking) * 100).toStringAsFixed(1) : "0.0";
-            bool isOverBudget = runningTotal > widget.eventBudget;
-            bool canConfirm = !isOverBudget && selectedVendorIds.isNotEmpty;
+            // If backend already computed overall savings, prefer it when all
+            // vendors are selected (more accurate — computed from Postgres).
+            final allSelected = selectedVendorIds.length == pkg.vendors.length;
+            if (allSelected && pkg.totalSavings > 0) {
+              runningSavings = pkg.totalSavings;
+            }
+            // Savings percent: use backend value when all selected, else compute
+            final double savingsPercentRaw = allSelected && pkg.savingsPercent > 0
+                ? pkg.savingsPercent
+                : (runningAsking > 0 ? (runningSavings / runningAsking * 100) : 0.0);
+            final String savingsPercentStr = savingsPercentRaw.toStringAsFixed(1);
+            final bool isOverBudget = runningTotal > widget.eventBudget;
+            final bool canConfirm = !isOverBudget && selectedVendorIds.isNotEmpty;
 
             return Column(
               children: [
@@ -778,11 +900,14 @@ class _BestCombinationScreenState extends State<BestCombinationScreen> with Tick
                                       const SizedBox(height: 12),
                                       Row(
                                         children: [
-                                          Text(
-                                            "PKR ${NumberFormat.compact().format(v.askingPrice)}",
-                                            style: GoogleFonts.inter(fontSize: 14, color: const Color(0xFF888888), decoration: TextDecoration.lineThrough),
-                                          ),
-                                          const SizedBox(width: 8),
+                                          // Only show asking price strikethrough if it's different from negotiated
+                                          if (v.askingPrice > v.negotiatedPrice) ...[
+                                            Text(
+                                              "PKR ${NumberFormat.compact().format(v.askingPrice)}",
+                                              style: GoogleFonts.inter(fontSize: 14, color: const Color(0xFF888888), decoration: TextDecoration.lineThrough),
+                                            ),
+                                            const SizedBox(width: 8),
+                                          ],
                                           Text(
                                             "PKR ${NumberFormat.compact().format(v.negotiatedPrice)}",
                                             style: GoogleFonts.inter(fontSize: 16, fontWeight: FontWeight.bold, color: const Color(0xFF1A1A1A)),
@@ -790,14 +915,30 @@ class _BestCombinationScreenState extends State<BestCombinationScreen> with Tick
                                         ],
                                       ),
                                       const SizedBox(height: 8),
-                                      Container(
-                                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                                        decoration: BoxDecoration(
-                                          color: AppColors.mossGreen.withValues(alpha: 0.1),
-                                          borderRadius: BorderRadius.circular(6),
+                                      if (v.savings > 0)
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                          decoration: BoxDecoration(
+                                            color: AppColors.mossGreen.withValues(alpha: 0.1),
+                                            borderRadius: BorderRadius.circular(6),
+                                          ),
+                                          child: Text(
+                                            "Saved PKR ${NumberFormat('#,###').format(v.savings.toInt())}",
+                                            style: GoogleFonts.inter(fontSize: 11, fontWeight: FontWeight.w600, color: AppColors.mossGreen),
+                                          ),
+                                        )
+                                      else
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                          decoration: BoxDecoration(
+                                            color: const Color(0xFFF5F5F5),
+                                            borderRadius: BorderRadius.circular(6),
+                                          ),
+                                          child: Text(
+                                            "Final price",
+                                            style: GoogleFonts.inter(fontSize: 11, fontWeight: FontWeight.w600, color: const Color(0xFF888888)),
+                                          ),
                                         ),
-                                        child: Text("Saved PKR ${NumberFormat('#,###').format(v.savings)}", style: GoogleFonts.inter(fontSize: 11, fontWeight: FontWeight.w600, color: AppColors.mossGreen)),
-                                      ),
                                     ],
                                   ),
                                 ),
