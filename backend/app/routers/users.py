@@ -104,6 +104,17 @@ async def onboard_vendor(
             detail="This account is registered as a customer. Please sign in as a vendor.",
         )
 
+    try:
+        return await _do_onboard_vendor(body, db, user)
+    except HTTPException:
+        raise  # re-raise intentional HTTP errors as-is
+    except Exception as exc:
+        logger.exception("Unhandled error in onboard_vendor for uid=%s: %s", user.uid, exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Profile save failed: {exc}",
+        )
+
     # Normalize category keys to match standard Postgres/matching categories
     category_map = {
         "caterer": "Caterer",
@@ -287,9 +298,189 @@ async def onboard_vendor(
                     logger.info("Retroactively spawned negotiation %s for vendor %s on event %s", neg_firestore_id, vendor.business_name, event.id)
 
                     # Trigger the background negotiation worker
-                    asyncio.create_task(
-                        _run_with_timeout(neg_id, settings.vendor_timeout_secs)
-                    )
+                    # Use ensure_future — safer than create_task when called
+                    # from inside a nested async def that may not have a
+                    # running loop reference directly accessible.
+                    try:
+                        import asyncio as _asyncio
+                        _asyncio.ensure_future(
+                            _run_with_timeout(neg_id, settings.vendor_timeout_secs)
+                        )
+                    except RuntimeError:
+                        logger.warning(
+                            "Could not schedule negotiation task for %s — no running loop",
+                            neg_id,
+                        )
+        await db.commit()
+    except Exception as ex:
+        logger.error("Error in retroactive event matching for vendor: %s", ex)
+
+    return {"status": "ok", "vendor_id": str(vendor.id)}
+
+
+async def _do_onboard_vendor(
+    body: VendorOnboardRequest,
+    db: AsyncSession,
+    user: FirebaseUser,
+) -> dict:
+    """Core onboard-vendor logic extracted so the route handler can wrap it in try/except."""
+    from app.auth import get_firestore_client
+
+    category_map = {
+        "caterer": "Caterer", "decorator": "Decorator",
+        "photographer": "Photographer", "dj_sound": "DJ / Music",
+        "dj / music": "DJ / Music", "tent": "Tent / Marquee",
+        "tent / marquee": "Tent / Marquee", "security": "Security",
+        "flowers": "Flowers", "sound system": "Sound System",
+        "sound": "Sound System", "venue": "Venue", "food": "Caterer",
+        "refreshments": "Caterer", "medical": "Security",
+        "ground": "Venue", "stage": "Venue", "av": "DJ / Music",
+        "other": "Other",
+    }
+    normalized_category = category_map.get(body.category.lower(), body.category)
+
+    # 1. Upsert vendor record in Postgres
+    result = await db.execute(select(Vendor).where(Vendor.firebase_uid == user.uid))
+    vendor = result.scalar_one_or_none()
+
+    if vendor is None:
+        stmt = select(Vendor).where(
+            Vendor.category == normalized_category,
+            Vendor.city == body.city.lower(),
+            Vendor.firebase_uid == None,
+        ).limit(1)
+        res = await db.execute(stmt)
+        vendor = res.scalar_one_or_none()
+
+        if vendor is not None:
+            vendor.firebase_uid = user.uid
+            vendor.business_name = body.business_name
+            vendor.base_price_min = int(body.min_price)
+            vendor.base_price_max = int(body.base_price)
+            vendor.listed_price = int(body.base_price)
+            logger.info("Firebase user %s claimed seeded vendor: %s", user.uid, vendor.business_name)
+        else:
+            vendor = Vendor(
+                id=uuid.uuid4(),
+                firebase_uid=user.uid,
+                business_name=body.business_name,
+                category=normalized_category,
+                city=body.city.lower(),
+                base_price_min=int(body.min_price),
+                base_price_max=int(body.base_price),
+                listed_price=int(body.base_price),
+                rating=5.0,
+                verified=True,
+            )
+            db.add(vendor)
+            logger.info("Created new vendor in Postgres for firebase user %s", user.uid)
+    else:
+        vendor.business_name = body.business_name
+        vendor.category = normalized_category
+        vendor.city = body.city.lower()
+        vendor.base_price_min = int(body.min_price)
+        vendor.base_price_max = int(body.base_price)
+        vendor.listed_price = int(body.base_price)
+
+    await db.commit()
+
+    # 2. Sync Firestore negotiations with vendorFirebaseUid
+    try:
+        firestore_client = get_firestore_client()
+        neg_ref = firestore_client.collection("negotiations")
+        query = neg_ref.where("vendorId", "==", str(vendor.id)).stream()
+        for doc in query:
+            doc.reference.update({"vendorFirebaseUid": user.uid})
+            logger.info("Updated negotiation %s with vendorFirebaseUid %s", doc.id, user.uid)
+    except Exception as e:
+        logger.error("Error updating Firestore negotiations for onboarded vendor: %s", e)
+
+    # 3. Retroactive event matching
+    try:
+        from app.models.event import Event
+        from app.models.event_vendor_allocation import EventVendorAllocation
+        from app.models.negotiation import Negotiation
+        from app.services.negotiation_orchestrator import _run_with_timeout
+        from app.services.state_sync import create_negotiation_mirror
+        from app.config import get_settings
+        import asyncio as _asyncio
+
+        settings = get_settings()
+        stmt = select(Event).where(
+            Event.city == vendor.city,
+            Event.status.in_(["matching", "negotiating"]),
+        )
+        res = await db.execute(stmt)
+        active_events = res.scalars().all()
+
+        for event in active_events:
+            alloc_stmt = select(EventVendorAllocation).where(
+                EventVendorAllocation.event_id == event.id,
+                EventVendorAllocation.category == vendor.category,
+            )
+            alloc_res = await db.execute(alloc_stmt)
+            allocation = alloc_res.scalar_one_or_none()
+            if allocation is None:
+                continue
+
+            neg_stmt = select(Negotiation).where(
+                Negotiation.event_id == event.id,
+                Negotiation.vendor_id == vendor.id,
+            )
+            neg_res = await db.execute(neg_stmt)
+            if neg_res.scalar_one_or_none() is not None:
+                continue
+
+            neg_id = uuid.uuid4()
+            neg_firestore_id = f"neg_{neg_id.hex[:16]}"
+            allocated = int(allocation.allocated_amount)
+            flexibility = float(event.negotiation_flexibility or 0.15)
+            max_budget = int(allocated * (1.0 + flexibility))
+
+            from app.services.pricing_calculator import calculate_vendor_event_price
+            price, floor_price = calculate_vendor_event_price(
+                vendor_category=vendor.category,
+                base_price=float(vendor.listed_price or vendor.base_price_max or 0),
+                min_price=float(vendor.base_price_min or 0),
+                guest_count=event.guest_count,
+                venue_pref=event.indoor_outdoor,
+            )
+
+            new_neg = Negotiation(
+                id=neg_id,
+                firestore_id=neg_firestore_id,
+                event_id=event.id,
+                vendor_id=vendor.id,
+                status="connecting",
+                asking_price=int(price),
+                floor_price=int(floor_price),
+                max_rounds=settings.max_negotiation_rounds,
+                is_vendor_turn=False,
+            )
+            db.add(new_neg)
+            await db.flush()
+
+            await create_negotiation_mirror(
+                db=db,
+                negotiation_id=neg_id,
+                event=event,
+                vendor_id=vendor.id,
+                vendor_firebase_uid=user.uid,
+                vendor_name=vendor.business_name,
+                vendor_category=vendor.category,
+                neg_firestore_id=neg_firestore_id,
+                allocated_budget=allocated,
+                max_budget=max_budget,
+                asking_price=int(vendor.listed_price),
+                max_rounds=settings.max_negotiation_rounds,
+            )
+            logger.info("Retroactively spawned negotiation %s for vendor %s", neg_firestore_id, vendor.business_name)
+
+            try:
+                _asyncio.ensure_future(_run_with_timeout(neg_id, settings.vendor_timeout_secs))
+            except RuntimeError:
+                logger.warning("Could not schedule negotiation task for %s — no running loop", neg_id)
+
         await db.commit()
     except Exception as ex:
         logger.error("Error in retroactive event matching for vendor: %s", ex)
