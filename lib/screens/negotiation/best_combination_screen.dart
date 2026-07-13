@@ -117,6 +117,9 @@ class _BestCombinationScreenState extends State<BestCombinationScreen> with Tick
   /// Real Firestore stream — listens to events/{eventFirestoreId} and waits
   /// for the 'package' field to be written by the Aggregator Agent.
   /// FR-AGG-04, NFR-PERF-03: package appears in under 2s of agent writing it.
+  ///
+  /// HYBRID MODE: If package exists, use it (aggregator ran). If not, build
+  /// package from live negotiations collection (shows real-time deal status).
   Stream<VendorPackage> _firestorePackageStream() async* {
     final snapshots = FirebaseFirestore.instance
         .collection('events')
@@ -126,41 +129,97 @@ class _BestCombinationScreenState extends State<BestCombinationScreen> with Tick
     await for (final snap in snapshots) {
       final data = snap.data();
       if (data == null) continue;
+      
       final pkg = data['package'] as Map<String, dynamic>?;
-      if (pkg == null) continue; // aggregator hasn't finished yet
+      
+      // ── CASE 1: Aggregator package exists (authoritative) ────────────────
+      if (pkg != null && pkg['best_vendors'] != null) {
+        final bestVendors = pkg['best_vendors'] as Map<String, dynamic>;
+        final vendors = bestVendors.entries.map((entry) {
+          final v = entry.value as Map<String, dynamic>;
+          final finalNum = (v['final_price'] as num?)?.toDouble() ?? 0;
+          final askingRaw = (v['asking_price'] as num?)?.toDouble();
+          final askingNum = (askingRaw != null && askingRaw > 0) ? askingRaw : finalNum;
+          final savings = (askingNum - finalNum).clamp(0.0, double.infinity);
+          return PackageVendor(
+            vendorId: v['vendor_id'] as String? ?? '',
+            negotiationId: v['negotiation_id'] as String? ?? '',
+            vendorName: v['business_name'] as String? ?? entry.key,
+            category: entry.key,
+            askingPrice: askingNum,
+            negotiatedPrice: finalNum,
+            savings: savings,
+            confirmationStatus: 'pending',
+            vendorContact: '',
+          );
+        }).toList();
 
-      final bestVendors = pkg['best_vendors'] as Map<String, dynamic>? ?? {};
-      final vendors = bestVendors.entries.map((entry) {
-        final v = entry.value as Map<String, dynamic>;
-        final finalNum = (v['final_price'] as num?)?.toDouble() ?? 0;
-        // asking_price is now always written by the backend aggregator.
-        // Fall back to final_price if missing (no negative savings).
-        final askingRaw = (v['asking_price'] as num?)?.toDouble();
-        final askingNum = (askingRaw != null && askingRaw > 0) ? askingRaw : finalNum;
-        final savings = (askingNum - finalNum).clamp(0.0, double.infinity);
-        return PackageVendor(
-          vendorId: v['vendor_id'] as String? ?? '',
-          negotiationId: v['negotiation_id'] as String? ?? '',
-          vendorName: v['business_name'] as String? ?? entry.key,
-          category: entry.key,
-          askingPrice: askingNum,
-          negotiatedPrice: finalNum,
-          savings: savings,
-          confirmationStatus: 'pending',
-          vendorContact: '',
+        yield VendorPackage(
+          packageId: widget.eventFirestoreId,
+          totalCost: (pkg['total_cost'] as num?)?.toDouble() ?? 0,
+          totalAsking: vendors.fold(0.0, (s, v) => s + v.askingPrice),
+          totalSavings: (pkg['total_savings'] as num?)?.toDouble() ?? 0,
+          savingsPercent: (pkg['savings_percentage'] as num?)?.toDouble() ?? 0,
+          vendors: vendors,
+          optimizationReason: pkg['summary'] as String? ?? 'Best combination selected by AI.',
         );
-      }).toList();
+        break; // package is stable once written
+      }
+      
+      // ── CASE 2: No package yet — build from live negotiations ────────────
+      // This shows real-time status (e.g., vendor accepted but aggregator
+      // hasn't run yet). Uses current deal prices, not stale asking prices.
+      else {
+        final negsSnapshot = await FirebaseFirestore.instance
+            .collection('negotiations')
+            .where('eventFirestoreId', isEqualTo: widget.eventFirestoreId)
+            .get();
 
-      yield VendorPackage(
-        packageId: widget.eventFirestoreId,
-        totalCost: (pkg['total_cost'] as num?)?.toDouble() ?? 0,
-        totalAsking: vendors.fold(0.0, (s, v) => s + v.askingPrice),
-        totalSavings: (pkg['total_savings'] as num?)?.toDouble() ?? 0,
-        savingsPercent: (pkg['savings_percentage'] as num?)?.toDouble() ?? 0,
-        vendors: vendors,
-        optimizationReason: pkg['summary'] as String? ?? 'Best combination selected by AI.',
-      );
-      break; // package is stable once written
+        if (negsSnapshot.docs.isEmpty) continue;
+
+        final vendors = negsSnapshot.docs.map((doc) {
+          final d = doc.data();
+          final askingPrice = (d['askingPrice'] as num?)?.toDouble() ?? 0;
+          // Use finalPrice if deal/no_deal, else currentOffer (live negotiation)
+          final status = d['status'] as String? ?? 'pending';
+          final finalPrice = (d['finalPrice'] as num?)?.toDouble();
+          final currentOffer = (d['currentOffer'] as num?)?.toDouble() ?? askingPrice;
+          
+          final negotiatedPrice = (status == 'deal' && finalPrice != null)
+              ? finalPrice
+              : currentOffer;
+          
+          final savings = (askingPrice - negotiatedPrice).clamp(0.0, double.infinity);
+
+          return PackageVendor(
+            vendorId: d['vendorId'] as String? ?? '',
+            negotiationId: doc.id,
+            vendorName: d['vendorName'] as String? ?? 'Vendor',
+            category: d['category'] as String? ?? 'Unknown',
+            askingPrice: askingPrice,
+            negotiatedPrice: negotiatedPrice,
+            savings: savings,
+            confirmationStatus: status == 'deal' ? 'deal' : 'pending',
+            vendorContact: '',
+          );
+        }).toList();
+
+        final totalCost = vendors.fold(0.0, (s, v) => s + v.negotiatedPrice);
+        final totalAsking = vendors.fold(0.0, (s, v) => s + v.askingPrice);
+        final totalSavings = vendors.fold(0.0, (s, v) => s + v.savings);
+        final savingsPercent = totalAsking > 0 ? (totalSavings / totalAsking * 100) : 0.0;
+
+        yield VendorPackage(
+          packageId: widget.eventFirestoreId,
+          totalCost: totalCost,
+          totalAsking: totalAsking,
+          totalSavings: totalSavings,
+          savingsPercent: savingsPercent,
+          vendors: vendors,
+          optimizationReason: 'Live negotiation status (aggregator pending)',
+        );
+        // Don't break — keep listening for aggregator package
+      }
     }
   }
 
