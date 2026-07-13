@@ -38,7 +38,6 @@ class _VendorNegotiationDetailScreenState
   bool _showCounterSheet = false;
   bool _expandedRequirement = false;
   double _minPrice = 0.0;
-  String _vendorCategory = '';
 
   late AnimationController _pulseController;
   late Animation<double> _pulseAnimation;
@@ -102,17 +101,19 @@ class _VendorNegotiationDetailScreenState
     final amount = double.tryParse(amountText);
     if (amount == null) return;
 
-    double floorPrice = _minPrice;
-    if (_vendorCategory.toLowerCase().contains("caterer")) {
-      floorPrice = _minPrice * detail.guestCount;
-    }
+    // Use the backend-computed floorPrice from the negotiation doc.
+    // This is already calculated with the correct guest count and category
+    // by the pricing calculator — no manual re-multiplication needed.
+    final double floorPrice = detail.floorPrice > 0
+        ? detail.floorPrice
+        : _minPrice; // fallback to vendor's base min price
 
     if (amount < floorPrice) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              "Counter offer cannot be less than your floor price of PKR ${floorPrice.toStringAsFixed(0)}",
+              "Counter offer cannot be less than your minimum price of PKR ${floorPrice.toStringAsFixed(0)}",
             ),
           ),
         );
@@ -1086,10 +1087,14 @@ class _VendorNegotiationDetailScreenState
                           final amount = double.tryParse(value.text);
                           final isInvalid =
                               value.text.isNotEmpty && amount == null;
+                          // Use backend floorPrice if available, else _minPrice
+                          final double effectiveFloor = detail.floorPrice > 0
+                              ? detail.floorPrice
+                              : _minPrice;
                           final isBelowMin =
-                              amount != null && amount < _minPrice;
+                              amount != null && amount < effectiveFloor;
                           final canSubmit =
-                              amount != null && amount >= _minPrice;
+                              amount != null && amount >= effectiveFloor;
 
                           String? errorText;
                           if (isInvalid) errorText = tr('invalid_amount');

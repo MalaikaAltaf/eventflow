@@ -110,6 +110,7 @@ async def orchestrate_negotiations(
                     max_budget=max_budget,
                     asking_price=vendor.listed_price,
                     max_rounds=settings.max_negotiation_rounds,
+                    floor_price=vendor.floor_price,
                 )
 
         await db.commit()

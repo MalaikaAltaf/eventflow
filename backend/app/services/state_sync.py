@@ -261,6 +261,7 @@ async def create_negotiation_mirror(
     max_budget: int,
     asking_price: int,
     max_rounds: int,
+    floor_price: int = 0,
 ) -> None:
     """
     Initial Firestore write to mirror a newly created negotiation (PG ↔ Firestore).
@@ -292,13 +293,14 @@ async def create_negotiation_mirror(
         "offerCount": 0,
         "maxOffers": max_rounds,
         "customerFirebaseUid": event.customer_firebase_uid,
-        
+
         # Mirroring event fields for vendor chat UI
         "eventType": event.type,
         "eventDate": event_date_val,
         "city": event.city or "",
-        "guestCount": event.guest_count,
+        "guestCount": event.guest_count,   # authoritative from the event record
         "requirement": requirement_val,
+        "floorPrice": floor_price,         # backend-computed, used by Flutter for validation
     }
 
     await _firestore_update(f"negotiations/{neg_firestore_id}", fs_data)
